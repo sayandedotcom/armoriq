@@ -5,6 +5,7 @@ import os
 from datetime import datetime
 from typing import Any
 from contextlib import asynccontextmanager
+from dotenv import load_dotenv
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks, Request
@@ -73,6 +74,9 @@ async def lifespan(app: FastAPI):
     global llm, agent
 
     logger.info("Starting Armoriq Agent...")
+
+    load_dotenv()
+    logger.info("Environment variables loaded from .env")
 
     try:
         llm = LLMClient()

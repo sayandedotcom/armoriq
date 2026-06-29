@@ -4,7 +4,7 @@ import google.generativeai as genai
 
 
 class LLMClient:
-    def __init__(self, model: str = "gemini-1.5-pro"):
+    def __init__(self, model: str = "gemini-1.5-flash"):
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY not set")
@@ -31,14 +31,27 @@ class LLMClient:
     def convert_mcp_tools_to_gemini(self, mcp_tools: list) -> list[dict]:
         gemini_tools = []
         for tool in mcp_tools:
+            schema = tool.input_schema if tool.input_schema else {"type": "object", "properties": {}}
+            schema = self._clean_schema(schema)
             gemini_tools.append({
                 "function_declarations": [{
                     "name": f"{tool.server_name}__{tool.name}",
                     "description": tool.description,
-                    "parameters": tool.input_schema if tool.input_schema else {"type": "object", "properties": {}},
+                    "parameters": schema,
                 }]
             })
         return gemini_tools
+
+    def _clean_schema(self, schema: dict) -> dict:
+        allowed_fields = {"type", "properties", "required", "enum", "description", "items", "format"}
+        if not isinstance(schema, dict):
+            return schema
+        cleaned = {k: v for k, v in schema.items() if k in allowed_fields}
+        if "properties" in cleaned and isinstance(cleaned["properties"], dict):
+            cleaned["properties"] = {k: self._clean_schema(v) for k, v in cleaned["properties"].items()}
+        if "items" in cleaned and isinstance(cleaned["items"], dict):
+            cleaned["items"] = self._clean_schema(cleaned["items"])
+        return cleaned
 
     async def generate_async(
         self,
