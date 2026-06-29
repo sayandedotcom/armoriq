@@ -1,0 +1,8 @@
+{
+  "name": "@armoriq/agent",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "PYTHONPATH=./src uv run uvicorn main:app --port 8000 --reload"
+  }
+}

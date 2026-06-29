@@ -1,0 +1,15 @@
+{
+  "servers": [
+    {
+      "name": "bank",
+      "transport": "stdio",
+      "command": "python",
+      "args": ["-m", "mcp_bank"]
+    },
+    {
+      "name": "tavily",
+      "transport": "streamable_http",
+      "url": "https://mcp.tavily.com/mcp/"
+    }
+  ]
+}
