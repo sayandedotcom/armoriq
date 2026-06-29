@@ -1,0 +1,23 @@
+# Virtual Environment
+.venv/
+
+# Lock files
+# uv.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Package metadata
+*.egg-info/
+
+# Testing
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
