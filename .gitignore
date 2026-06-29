@@ -36,3 +36,10 @@ yarn-error.log*
 # Misc
 .DS_Store
 *.pem
+
+# IDE
+.cursor
+.idea
+.vscode
+!.vscode/extensions.json
+!.vscode/settings.json
