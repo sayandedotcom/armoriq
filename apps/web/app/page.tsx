@@ -271,12 +271,17 @@ export default function Dashboard() {
     }
   };
 
-  const navItems = [
+  const navItems: Array<{
+    id: "rules" | "approvals" | "logs" | "chat";
+    label: string;
+    icon: React.ElementType;
+    badge?: number;
+  }> = [
     { id: "rules", label: "Rules", icon: ShieldCheck },
     { id: "approvals", label: "Approvals", icon: ShieldAlert, badge: approvals.length },
     { id: "logs", label: "Activity", icon: Activity },
     { id: "chat", label: "Chat", icon: MessageSquare },
-  ] as const;
+  ];
 
   return (
     <div className="min-h-screen flex flex-col font-sans bg-background">
