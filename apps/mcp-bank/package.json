@@ -1,0 +1,8 @@
+{
+  "name": "@armoriq/mcp-bank",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "uv run python -m mcp_bank"
+  }
+}
