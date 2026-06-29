@@ -1,0 +1,121 @@
+import os
+from typing import Any
+import google.generativeai as genai
+
+
+class LLMClient:
+    def __init__(self, model: str = "gemini-1.5-pro"):
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY not set")
+        genai.configure(api_key=api_key)
+        self.model_name = model
+        self.model = genai.GenerativeModel(
+            model_name=model,
+            generation_config={
+                "temperature": 0.2,
+                "top_p": 0.95,
+                "top_k": 40,
+                "max_output_tokens": 8192,
+            },
+        )
+        self._total_tokens = 0
+
+    def reset_usage(self):
+        self._total_tokens = 0
+
+    @property
+    def total_tokens(self) -> int:
+        return self._total_tokens
+
+    def convert_mcp_tools_to_gemini(self, mcp_tools: list) -> list[dict]:
+        gemini_tools = []
+        for tool in mcp_tools:
+            gemini_tools.append({
+                "function_declarations": [{
+                    "name": f"{tool.server_name}__{tool.name}",
+                    "description": tool.description,
+                    "parameters": tool.input_schema if tool.input_schema else {"type": "object", "properties": {}},
+                }]
+            })
+        return gemini_tools
+
+    async def generate_async(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        contents = self._build_contents(messages)
+
+        generate_content_kwargs = {"contents": contents}
+        if tools:
+            generate_content_kwargs["tools"] = tools
+
+        response = await self.model.generate_content_async(**generate_content_kwargs)
+
+        result = {
+            "content": "",
+            "tool_calls": [],
+            "usage": {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+            }
+        }
+
+        if hasattr(response, 'text') and response.text:
+            result["content"] = response.text
+
+        if hasattr(response, 'function_calls') and response.function_calls:
+            for fc in response.function_calls:
+                result["tool_calls"].append({
+                    "name": fc.name,
+                    "arguments": dict(fc.args) if hasattr(fc, 'args') else {},
+                })
+
+        if hasattr(response, 'usage_metadata'):
+            result["usage"] = {
+                "prompt_tokens": response.usage_metadata.prompt_token_count,
+                "completion_tokens": response.usage_metadata.candidates_token_count,
+                "total_tokens": response.usage_metadata.total_token_count,
+            }
+            self._total_tokens += result["usage"]["total_tokens"]
+
+        return result
+
+    def _build_contents(self, messages: list[dict]) -> list[dict]:
+        contents = []
+        for msg in messages:
+            role = msg.get("role")
+            if role == "user":
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": msg["content"]}]
+                })
+            elif role == "model":
+                parts = []
+                if msg.get("content"):
+                    parts.append({"text": msg["content"]})
+                if msg.get("tool_calls"):
+                    for tc in msg["tool_calls"]:
+                        parts.append({
+                            "function_call": {
+                                "name": tc["name"],
+                                "args": tc["arguments"],
+                            }
+                        })
+                if parts:
+                    contents.append({"role": "model", "parts": parts})
+            elif role == "tool":
+                tool_name = msg.get("name", "")
+                content = msg.get("content", "")
+                contents.append({
+                    "role": "user",
+                    "parts": [{
+                        "function_response": {
+                            "name": tool_name,
+                            "response": {"result": content},
+                        }
+                    }]
+                })
+        return contents
