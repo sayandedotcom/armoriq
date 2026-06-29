@@ -1,3 +1,4 @@
 packages:
   - "apps/*"
   - "packages/*"
+  # Root package is not included in workspace
