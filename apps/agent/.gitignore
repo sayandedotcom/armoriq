@@ -1,0 +1,27 @@
+# Environment
+.env
+
+# Database
+*.db
+*.sqlite
+
+# Virtual Environment
+.venv/
+
+# Lock files (use your package manager's lock file if needed)
+# uv.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# Testing
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
