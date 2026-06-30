@@ -69,48 +69,6 @@ async def broadcast(message: dict):
             connected_websockets.remove(ws)
 
 
-def seed_default_rules():
-    """Seed a starter set of guardrails on a fresh DB so the dashboard isn't
-    empty on first run. No-op if any rules already exist."""
-    if rule_store.get_all():
-        return
-
-    defaults = [
-        Rule(
-            name="Block account freezing",
-            rule_type=RuleType.BLOCK_TOOL,
-            priority=100,
-            config={"patterns": ["freeze_account"]},
-        ),
-        Rule(
-            name="Approve fund transfers",
-            rule_type=RuleType.REQUIRE_APPROVAL,
-            priority=50,
-            config={"patterns": ["transfer_funds"]},
-        ),
-        Rule(
-            name="Cap transfer amount",
-            rule_type=RuleType.INPUT_VALIDATION,
-            priority=40,
-            config={"constraints": {"amount": {"max_number": 10000}}},
-        ),
-        Rule(
-            name="Conversation token budget",
-            rule_type=RuleType.TOKEN_BUDGET,
-            priority=10,
-            config={"max_tokens": 100000},
-        ),
-        Rule(
-            name="Prompt injection guard",
-            rule_type=RuleType.PROMPT_INJECTION_GUARD,
-            priority=90,
-            config={"scan_inputs": True, "scan_results": True},
-        ),
-    ]
-    for rule in defaults:
-        rule_store.create(rule)
-    logger.info(f"Seeded {len(defaults)} default policy rules")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -135,8 +93,6 @@ async def lifespan(app: FastAPI):
         log_store=log_store,
     )
     app.state.agent = agent
-
-    seed_default_rules()
 
     try:
         with open("servers.json") as f:
@@ -254,6 +210,49 @@ async def create_rule(rule: RuleCreate):
     created = rule_store.create(new_rule)
     await broadcast({"type": "rule_created", "rule": created.model_dump()})
     return {"rule": created.model_dump()}
+
+
+@app.post("/rules/seed")
+async def seed_rules():
+    """Seed a starter set of guardrails. No-op if any rules already exist."""
+    if rule_store.get_all():
+        return {"seeded": False, "reason": "Rules already exist"}
+
+    defaults = [
+        Rule(
+            name="Block account freezing",
+            rule_type=RuleType.BLOCK_TOOL,
+            priority=100,
+            config={"patterns": ["freeze_account"]},
+        ),
+        Rule(
+            name="Approve fund transfers",
+            rule_type=RuleType.REQUIRE_APPROVAL,
+            priority=50,
+            config={"patterns": ["transfer_funds"]},
+        ),
+        Rule(
+            name="Cap transfer amount",
+            rule_type=RuleType.INPUT_VALIDATION,
+            priority=40,
+            config={"constraints": {"amount": {"max_number": 10000}}},
+        ),
+        Rule(
+            name="Conversation token budget",
+            rule_type=RuleType.TOKEN_BUDGET,
+            priority=10,
+            config={"max_tokens": 100000},
+        ),
+        Rule(
+            name="Prompt injection guard",
+            rule_type=RuleType.PROMPT_INJECTION_GUARD,
+            priority=90,
+            config={"scan_inputs": True, "scan_results": True},
+        ),
+    ]
+    created = [rule_store.create(r) for r in defaults]
+    await broadcast({"type": "rules_seeded"})
+    return {"seeded": True, "count": len(created)}
 
 
 @app.put("/rules/{rule_id}")
