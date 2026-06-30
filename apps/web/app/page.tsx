@@ -810,21 +810,6 @@ export default function Dashboard() {
                             )}
                           </div>
                         )}
-                        <div className="space-y-1.5">
-                          <label className="text-xs text-muted-foreground">
-                            Advanced — glob pattern (optional)
-                          </label>
-                          <Input
-                            placeholder="e.g. *__delete_*"
-                            value={ruleConfig.advancedPattern}
-                            onChange={(e) =>
-                              setRuleConfig({
-                                ...ruleConfig,
-                                advancedPattern: e.target.value,
-                              })
-                            }
-                          />
-                        </div>
                       </div>
                     )}
                     {newRule.rule_type === "input_validation" && (
