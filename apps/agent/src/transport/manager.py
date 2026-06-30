@@ -8,7 +8,6 @@ from typing import Any
 from dataclasses import dataclass
 
 from mcp import ClientSession
-from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
 logger = logging.getLogger(__name__)

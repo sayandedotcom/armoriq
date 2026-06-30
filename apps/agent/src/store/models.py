@@ -6,9 +6,6 @@ import asyncio
 
 
 class RuleStore:
-    def __init__(self):
-        self._subscribers: list[asyncio.Queue] = []
-
     def get_all(self) -> list[Rule]:
         with db.session() as s:
             db_rules = s.query(DBRule).all()
@@ -66,13 +63,6 @@ class RuleStore:
             s.delete(db_rule)
             s.commit()
         return True
-
-    def subscribe(self, q: asyncio.Queue):
-        self._subscribers.append(q)
-
-    async def _broadcast(self, message: dict):
-        for q in self._subscribers:
-            await q.put(message)
 
     @staticmethod
     def _db_to_rule(db_rule: DBRule) -> Rule:
