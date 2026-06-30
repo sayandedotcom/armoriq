@@ -45,7 +45,7 @@ async def test_stdio_bank_calls_tool(manager):
     result = await manager.call_tool("bank__list_accounts", {})
     assert len(result) == 1
     assert result[0]["type"] == "text"
-    accounts = json.loads(result[0]["text"])[0]["accounts"]
+    accounts = json.loads(result[0]["text"])
     assert len(accounts) == 4
 
 
