@@ -122,19 +122,22 @@ armoriq/
 
 ### Custom MCP Bank
 
-The custom MCP server exposes tools for:
-- CRUD operations on a mini database
-- File management operations
+A mock-bank MCP server (`apps/mcp-bank`) exposing 6 tools over stdio:
+`list_accounts`, `get_balance`, `get_transactions`, `transfer_funds`,
+`freeze_account`, and `unfreeze_account`. It's a good fit for guardrails demos —
+e.g. block `freeze_account`, require approval for `transfer_funds`, or cap the
+transfer `amount` via input validation.
 
 ### Remote MCP Servers
 
-Configure additional MCP servers in `apps/agent/servers.json`:
+Configure additional MCP servers in `apps/agent/servers.json`. The remote server
+wired up by default is Tavily (web search) over streamable-HTTP:
 
 ```json
 {
-  "name": "context7",
-  "transport": "sse",
-  "url": "https://api.context7.io/mcp"
+  "name": "tavily",
+  "transport": "streamable_http",
+  "url": "https://mcp.tavily.com/mcp/"
 }
 ```
 
