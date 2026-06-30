@@ -7,18 +7,21 @@ dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
     "google-generativeai>=0.8.5",
-    "langchain-mcp-adapters>=0.1.0",
     "mcp>=1.1.0",
-    "anthropic>=0.38.0",
     "pydantic>=2.10.0",
     "sqlalchemy>=2.0.36",
     "aiosqlite>=0.20.0",
     "python-multipart>=0.0.20",
     "websockets>=12.0",
     "httpx>=0.28.1",
-    "structlog>=24.4.0",
     "python-dotenv>=1.0.0",
+    "armoriq-mcp-bank",
 ]
+
+# The agent spawns the custom MCP bank as a stdio subprocess (see servers.json),
+# so the bank package must be importable from the agent's interpreter.
+[tool.uv.sources]
+armoriq-mcp-bank = { path = "../mcp-bank", editable = true }
 
 [project.optional-dependencies]
 dev = [
