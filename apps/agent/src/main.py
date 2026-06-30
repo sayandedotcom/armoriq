@@ -69,6 +69,49 @@ async def broadcast(message: dict):
             connected_websockets.remove(ws)
 
 
+def seed_default_rules():
+    """Seed a starter set of guardrails on a fresh DB so the dashboard isn't
+    empty on first run. No-op if any rules already exist."""
+    if rule_store.get_all():
+        return
+
+    defaults = [
+        Rule(
+            name="Block account freezing",
+            rule_type=RuleType.BLOCK_TOOL,
+            priority=100,
+            config={"patterns": ["freeze_account"]},
+        ),
+        Rule(
+            name="Approve fund transfers",
+            rule_type=RuleType.REQUIRE_APPROVAL,
+            priority=50,
+            config={"patterns": ["transfer_funds"]},
+        ),
+        Rule(
+            name="Cap transfer amount",
+            rule_type=RuleType.INPUT_VALIDATION,
+            priority=40,
+            config={"constraints": {"amount": {"max_number": 10000}}},
+        ),
+        Rule(
+            name="Conversation token budget",
+            rule_type=RuleType.TOKEN_BUDGET,
+            priority=10,
+            config={"max_tokens": 100000},
+        ),
+        Rule(
+            name="Prompt injection guard",
+            rule_type=RuleType.PROMPT_INJECTION_GUARD,
+            priority=90,
+            config={"scan_inputs": True, "scan_results": True},
+        ),
+    ]
+    for rule in defaults:
+        rule_store.create(rule)
+    logger.info(f"Seeded {len(defaults)} default policy rules")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global llm, agent
@@ -92,6 +135,8 @@ async def lifespan(app: FastAPI):
         log_store=log_store,
     )
     app.state.agent = agent
+
+    seed_default_rules()
 
     try:
         with open("servers.json") as f:
@@ -127,9 +172,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Armoriq Agent", version="0.1.0", lifespan=lifespan)
 
+# Lock CORS down in production by setting CORS_ORIGINS to a comma-separated
+# list of dashboard origins; defaults to "*" for local development.
+cors_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "*").split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -254,9 +303,8 @@ async def handle_approval(action: ApprovalAction, request: Request):
         approval_store.approve(action.approval_id)
         if current_agent:
             tool_call = approval.tool_call
-            namespaced_name = f"{tool_call.server_name}__{tool_call.name}"
             try:
-                mcp_result = await mcp_manager.call_tool(namespaced_name, tool_call.arguments)
+                mcp_result = await mcp_manager.call_tool(tool_call.name, tool_call.arguments)
                 current_agent.resolve_approval(action.approval_id, True, {
                     "status": "approved",
                     "executed": True,

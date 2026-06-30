@@ -5,17 +5,25 @@ from store.models import RuleStore
 
 
 INJECTION_PATTERNS = [
-    r"ignore\s+previous\s+instructions",
-    r"ignore\s+all\s+previous",
+    r"ignore\s+(all\s+)?previous\s+instructions",
+    r"ignore\s+the\s+above",
     r"disregard\s+your\s+instructions",
     r"new\s+instruction",
     r"override\s+your\s+programming",
     r"forget\s+everything",
     r"you\s+are\s+now\s+a\s+different",
+    r"reveal\s+your\s+system\s+prompt",
     r"system\s+prompt\s+hacking",
-    r"$\s*:\s*;",  # common injection technique
-    r"\\x",
 ]
+
+
+def scan_for_injection(text: str) -> str | None:
+    """Return the first injection pattern matched in `text`, or None."""
+    lowered = text.lower()
+    for pattern in INJECTION_PATTERNS:
+        if re.search(pattern, lowered, re.IGNORECASE):
+            return pattern
+    return None
 
 
 class PolicyEngine:
@@ -156,19 +164,36 @@ class PolicyEngine:
 
     def _check_prompt_injection(self, rule: Rule, tool_call: ToolCall) -> PolicyResult:
         scan_inputs = rule.config.get("scan_inputs", True)
-        scan_results = rule.config.get("scan_results", False)
 
-        if scan_inputs:
-            for pattern in INJECTION_PATTERNS:
-                args_str = str(tool_call.arguments).lower()
-                if re.search(pattern, args_str, re.IGNORECASE):
-                    return PolicyResult(
-                        decision=Decision.DENY,
-                        reason=f"Potential prompt injection detected in tool arguments by rule '{rule.name}'",
-                        rule_id=rule.id,
-                        tool_call=tool_call,
-                    )
+        if scan_inputs and scan_for_injection(str(tool_call.arguments)):
+            return PolicyResult(
+                decision=Decision.DENY,
+                reason=f"Potential prompt injection detected in tool arguments by rule '{rule.name}'",
+                rule_id=rule.id,
+                tool_call=tool_call,
+            )
 
+        return PolicyResult(decision=Decision.ALLOW, tool_call=tool_call)
+
+    def evaluate_result(self, tool_call: ToolCall, result_text: str) -> PolicyResult:
+        """Scan a tool's *result* for injection (second-order / indirect attacks).
+
+        Only PROMPT_INJECTION_GUARD rules with `scan_results` enabled apply here.
+        Returns DENY if the returned content looks like it is trying to hijack
+        the agent, so the poisoned output is never fed back to the model.
+        """
+        for rule in self.rule_store.get_enabled():
+            if rule.rule_type != RuleType.PROMPT_INJECTION_GUARD:
+                continue
+            if not rule.config.get("scan_results", False):
+                continue
+            if scan_for_injection(result_text):
+                return PolicyResult(
+                    decision=Decision.DENY,
+                    reason=f"Potential prompt injection detected in tool result by rule '{rule.name}'",
+                    rule_id=rule.id,
+                    tool_call=tool_call,
+                )
         return PolicyResult(decision=Decision.ALLOW, tool_call=tool_call)
 
     def _matches_pattern(self, text: str, pattern: str) -> bool:

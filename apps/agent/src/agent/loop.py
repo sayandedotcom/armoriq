@@ -28,6 +28,9 @@ class Agent:
         self.log_store = log_store
         self._conversations: dict[str, list[dict]] = {}
         self._approval_futures: dict[str, asyncio.Future] = {}
+        # Cumulative token usage keyed by conversation_id, so token-budget rules
+        # are enforced per-conversation rather than per-message.
+        self._token_usage: dict[str, int] = {}
 
     def get_or_create_conversation(self, conversation_id: str) -> list[dict]:
         if conversation_id not in self._conversations:
@@ -38,7 +41,6 @@ class Agent:
         conversation = self.get_or_create_conversation(conversation_id)
         conversation.append({"role": "user", "content": user_message})
 
-        self.llm.reset_usage()
         tools = self.mcp.get_tools()
         gemini_tools = self.llm.convert_mcp_tools_to_gemini(tools)
 
@@ -49,6 +51,11 @@ class Agent:
             iteration += 1
             messages = self._build_messages(conversation)
             response = await self.llm.generate_async(messages, tools=gemini_tools)
+
+            self._token_usage[conversation_id] = (
+                self._token_usage.get(conversation_id, 0)
+                + response.get("usage", {}).get("total_tokens", 0)
+            )
 
             tool_calls = response.get("tool_calls", [])
             if not tool_calls:
@@ -81,7 +88,7 @@ class Agent:
         return {
             "content": final_text,
             "conversation_id": conversation_id,
-            "token_usage": self.llm.total_tokens,
+            "token_usage": self._token_usage.get(conversation_id, 0),
         }
 
     async def _execute_tool_call(self, conversation_id: str, tool_call_data: dict) -> str:
@@ -102,7 +109,8 @@ class Agent:
             conversation_id=conversation_id,
         )
 
-        policy_result = self.policy.evaluate(tool_call, self.llm.total_tokens)
+        conversation_tokens = self._token_usage.get(conversation_id, 0)
+        policy_result = self.policy.evaluate(tool_call, conversation_tokens)
 
         self.log_store.create(LogEntry(
             conversation_id=conversation_id,
@@ -111,6 +119,7 @@ class Agent:
             decision=policy_result.decision,
             rule_id=policy_result.rule_id,
             reason=policy_result.reason,
+            token_used=conversation_tokens,
         ))
 
         if policy_result.decision == Decision.DENY:
@@ -124,7 +133,7 @@ class Agent:
             if result.get("error"):
                 return str(result)
             if result.get("status") == "rejected":
-                return f"ERROR: Approval denied"
+                return "ERROR: Tool execution was denied by a human operator"
             if result.get("status") == "approved" and result.get("executed"):
                 return str(result.get("result", {}))
             return str(result)
@@ -132,6 +141,21 @@ class Agent:
         try:
             mcp_result = await self.mcp.call_tool(tool_name, arguments)
             result_content = self._format_mcp_result(mcp_result)
+
+            result_guard = self.policy.evaluate_result(tool_call, str(result_content))
+            if result_guard.decision == Decision.DENY:
+                logger.warning(f"Tool {tool_name} result blocked: {result_guard.reason}")
+                self.log_store.create(LogEntry(
+                    conversation_id=conversation_id,
+                    tool_name=tool_name,
+                    tool_arguments=arguments,
+                    decision=result_guard.decision,
+                    rule_id=result_guard.rule_id,
+                    reason=result_guard.reason,
+                    token_used=conversation_tokens,
+                ))
+                return f"ERROR: {result_guard.reason}"
+
             logger.info(f"Tool {tool_name} executed successfully")
             return str(result_content)
         except Exception as e:
@@ -152,12 +176,16 @@ class Agent:
             self._approval_futures.pop(approval_id, None)
 
     def resolve_approval(self, approval_id: str, approved: bool, result: dict | None = None):
-        if approval_id in self._approval_futures:
-            future = self._approval_futures[approval_id]
-            if approved:
-                future.set_result(result or {"status": "approved"})
-            else:
-                future.set_exception(Exception("Approval denied"))
+        future = self._approval_futures.get(approval_id)
+        if future is None or future.done():
+            return
+        if approved:
+            future.set_result(result or {"status": "approved"})
+        else:
+            # Resolve (don't raise) so the awaiting tool-use loop continues and
+            # feeds a graceful "denied" result back to the model instead of
+            # aborting the whole turn.
+            future.set_result(result or {"status": "rejected"})
 
     def _format_mcp_result(self, mcp_result: Any) -> Any:
         if isinstance(mcp_result, list):
