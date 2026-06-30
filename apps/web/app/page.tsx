@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Card,
   CardContent,
@@ -86,7 +86,7 @@ export default function Dashboard() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [ws, setWs] = useState<WebSocket | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState("");
@@ -97,13 +97,94 @@ export default function Dashboard() {
     name: "",
     rule_type: "block_tool",
     priority: 0,
-    config: {},
   });
+
+  const [tools, setTools] = useState<{ name: string; server: string }[]>([]);
+
+  const [ruleConfig, setRuleConfig] = useState({
+    selectedTools: [] as string[], // block_tool / require_approval (exact tool names)
+    advancedPattern: "", // optional glob, e.g. *__delete_*
+    fieldName: "", // input_validation
+    constraintType: "path_prefix",
+    constraintValue: "",
+    maxTokens: 100000, // token_budget
+    scanInputs: true, // prompt_injection_guard
+    scanResults: true,
+  });
+
+  // "bank__list_accounts" -> "List Accounts"
+  const humanizeTool = (namespaced: string) => {
+    const bare = namespaced.includes("__")
+      ? namespaced.split("__").slice(1).join("__")
+      : namespaced;
+    return bare
+      .split("_")
+      .filter(Boolean)
+      .map((w) => w[0].toUpperCase() + w.slice(1))
+      .join(" ");
+  };
+
+  const toggleTool = (name: string) => {
+    setRuleConfig((cfg) => ({
+      ...cfg,
+      selectedTools: cfg.selectedTools.includes(name)
+        ? cfg.selectedTools.filter((t) => t !== name)
+        : [...cfg.selectedTools, name],
+    }));
+  };
+
+  const toolsByServer = tools.reduce<Record<string, string[]>>((acc, t) => {
+    (acc[t.server] ??= []).push(t.name);
+    return acc;
+  }, {});
+
+  const buildConfig = (): Record<string, unknown> => {
+    switch (newRule.rule_type) {
+      case "block_tool":
+      case "require_approval": {
+        const advanced = ruleConfig.advancedPattern
+          .split(/[\n,]/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+        return { patterns: [...ruleConfig.selectedTools, ...advanced] };
+      }
+      case "input_validation": {
+        if (!ruleConfig.fieldName) return { constraints: {} };
+        let val: unknown = ruleConfig.constraintValue;
+        if (
+          ruleConfig.constraintType === "max_number" ||
+          ruleConfig.constraintType === "min_number"
+        ) {
+          val = Number(ruleConfig.constraintValue);
+        } else if (ruleConfig.constraintType === "allowed_values") {
+          val = ruleConfig.constraintValue
+            .split(/[\n,]/)
+            .map((v) => v.trim())
+            .filter(Boolean);
+        }
+        return {
+          constraints: {
+            [ruleConfig.fieldName]: { [ruleConfig.constraintType]: val },
+          },
+        };
+      }
+      case "token_budget":
+        return { max_tokens: Number(ruleConfig.maxTokens) || 0 };
+      case "prompt_injection_guard":
+        return {
+          scan_inputs: ruleConfig.scanInputs,
+          scan_results: ruleConfig.scanResults,
+        };
+      default:
+        return {};
+    }
+  };
 
   useEffect(() => {
     fetchRules();
     fetchApprovals();
     fetchLogs();
+    fetchTools();
     connectWebSocket();
 
     const interval = setInterval(() => {
@@ -113,21 +194,26 @@ export default function Dashboard() {
 
     return () => {
       clearInterval(interval);
-      ws?.close();
+      wsRef.current?.close();
     };
   }, []);
 
   const connectWebSocket = useCallback(() => {
+    // Close any existing connection first so we never have two live sockets
+    // sending duplicate messages (React 18 StrictMode mounts effects twice).
+    if (wsRef.current && wsRef.current.readyState < WebSocket.CLOSING) {
+      wsRef.current.close();
+    }
+
     const socket = new WebSocket(WS_URL);
+    wsRef.current = socket;
 
     socket.onopen = () => {
       setConnected(true);
-      console.log("WebSocket connected");
     };
 
     socket.onclose = () => {
       setConnected(false);
-      console.log("WebSocket disconnected");
       setTimeout(connectWebSocket, 3000);
     };
 
@@ -153,8 +239,6 @@ export default function Dashboard() {
         console.error("WebSocket message error:", e);
       }
     };
-
-    setWs(socket);
   }, []);
 
   const fetchRules = async () => {
@@ -187,19 +271,45 @@ export default function Dashboard() {
     }
   };
 
+  const fetchTools = async () => {
+    try {
+      const res = await fetch(`${API_URL}/tools`);
+      const data = await res.json();
+      setTools(
+        (data.tools || []).map(
+          (t: { name: string; server_name: string }) => ({
+            name: t.name,
+            server: t.server_name,
+          }),
+        ),
+      );
+    } catch (e) {
+      console.error("Failed to fetch tools:", e);
+    }
+  };
+
   const createRule = async () => {
     if (!newRule.name) return;
     try {
       await fetch(`${API_URL}/rules`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newRule),
+        body: JSON.stringify({ ...newRule, config: buildConfig() }),
       });
       setNewRule({
         name: "",
         rule_type: "block_tool",
         priority: 0,
-        config: {},
+      });
+      setRuleConfig({
+        selectedTools: [],
+        advancedPattern: "",
+        fieldName: "",
+        constraintType: "path_prefix",
+        constraintValue: "",
+        maxTokens: 100000,
+        scanInputs: true,
+        scanResults: true,
       });
       fetchRules();
     } catch (e) {
@@ -471,6 +581,183 @@ export default function Dashboard() {
                         </SelectContent>
                       </Select>
                     </div>
+                    {(newRule.rule_type === "block_tool" ||
+                      newRule.rule_type === "require_approval") && (
+                      <div className="space-y-3">
+                        <label className="text-sm font-medium">
+                          {newRule.rule_type === "block_tool"
+                            ? "Tools to block"
+                            : "Tools requiring approval"}
+                        </label>
+                        {tools.length === 0 ? (
+                          <p className="text-xs text-muted-foreground">
+                            No tools discovered yet — is the agent running?
+                          </p>
+                        ) : (
+                          <div className="space-y-3 rounded-md border p-3">
+                            {Object.entries(toolsByServer).map(
+                              ([server, names]) => (
+                                <div key={server} className="space-y-1.5">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                    {server}
+                                  </p>
+                                  <div className="flex flex-wrap gap-1.5">
+                                    {names.map((name) => {
+                                      const selected =
+                                        ruleConfig.selectedTools.includes(name);
+                                      return (
+                                        <button
+                                          key={name}
+                                          type="button"
+                                          onClick={() => toggleTool(name)}
+                                          title={name}
+                                          className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                                            selected
+                                              ? "border-primary bg-primary/10 text-primary"
+                                              : "border-border bg-background text-muted-foreground hover:bg-muted"
+                                          }`}
+                                        >
+                                          {humanizeTool(name)}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              ),
+                            )}
+                          </div>
+                        )}
+                        <div className="space-y-1.5">
+                          <label className="text-xs text-muted-foreground">
+                            Advanced — glob pattern (optional)
+                          </label>
+                          <Input
+                            placeholder="e.g. *__delete_*"
+                            value={ruleConfig.advancedPattern}
+                            onChange={(e) =>
+                              setRuleConfig({
+                                ...ruleConfig,
+                                advancedPattern: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {newRule.rule_type === "input_validation" && (
+                      <>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">
+                            Argument field
+                          </label>
+                          <Input
+                            placeholder="e.g. path or amount"
+                            value={ruleConfig.fieldName}
+                            onChange={(e) =>
+                              setRuleConfig({
+                                ...ruleConfig,
+                                fieldName: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">
+                            Constraint
+                          </label>
+                          <Select
+                            value={ruleConfig.constraintType}
+                            onValueChange={(val) =>
+                              setRuleConfig({
+                                ...ruleConfig,
+                                constraintType: val,
+                              })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="path_prefix">
+                                Path must start with
+                              </SelectItem>
+                              <SelectItem value="max_number">
+                                Max number
+                              </SelectItem>
+                              <SelectItem value="min_number">
+                                Min number
+                              </SelectItem>
+                              <SelectItem value="regex">Regex match</SelectItem>
+                              <SelectItem value="allowed_values">
+                                Allowed values
+                              </SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Value</label>
+                          <Input
+                            placeholder={
+                              ruleConfig.constraintType === "path_prefix"
+                                ? "/sandbox/"
+                                : ruleConfig.constraintType === "allowed_values"
+                                  ? "a, b, c"
+                                  : "value"
+                            }
+                            value={ruleConfig.constraintValue}
+                            onChange={(e) =>
+                              setRuleConfig({
+                                ...ruleConfig,
+                                constraintValue: e.target.value,
+                              })
+                            }
+                          />
+                        </div>
+                      </>
+                    )}
+                    {newRule.rule_type === "token_budget" && (
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium">
+                          Max tokens per conversation
+                        </label>
+                        <Input
+                          type="number"
+                          value={ruleConfig.maxTokens}
+                          onChange={(e) =>
+                            setRuleConfig({
+                              ...ruleConfig,
+                              maxTokens: parseInt(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      </div>
+                    )}
+                    {newRule.rule_type === "prompt_injection_guard" && (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium">
+                            Scan tool inputs
+                          </label>
+                          <Switch
+                            checked={ruleConfig.scanInputs}
+                            onCheckedChange={(v) =>
+                              setRuleConfig({ ...ruleConfig, scanInputs: v })
+                            }
+                          />
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="text-sm font-medium">
+                            Scan tool results
+                          </label>
+                          <Switch
+                            checked={ruleConfig.scanResults}
+                            onCheckedChange={(v) =>
+                              setRuleConfig({ ...ruleConfig, scanResults: v })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div className="space-y-2">
                       <label className="text-sm font-medium">
                         Priority (higher = earlier)
