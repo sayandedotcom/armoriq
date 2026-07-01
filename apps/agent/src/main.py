@@ -348,6 +348,14 @@ async def list_logs(conversation_id: str | None = None, limit: int = 100):
     }
 
 
+@app.delete("/logs/{log_id}")
+async def delete_log(log_id: str):
+    if not log_store.delete(log_id):
+        raise HTTPException(status_code=404, detail="Log not found")
+    await broadcast({"type": "log_deleted", "log_id": log_id})
+    return {"status": "deleted", "log_id": log_id}
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
