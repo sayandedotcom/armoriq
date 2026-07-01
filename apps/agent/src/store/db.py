@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from sqlalchemy import create_engine, Column, String, Integer, Float, Boolean, DateTime, Text, ForeignKey, JSON
 from sqlalchemy.orm import declarative_base
@@ -71,4 +72,4 @@ class Database:
         self.engine.dispose()
 
 
-db = Database()
+db = Database(url=os.environ.get("DATABASE_URL", "sqlite:///./armoriq.db"))
