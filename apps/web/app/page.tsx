@@ -273,6 +273,15 @@ export default function Dashboard() {
     }
   };
 
+  const deleteLog = async (logId: string) => {
+    try {
+      await fetch(`${API_URL}/logs/${logId}`, { method: "DELETE" });
+      setLogs((prev) => prev.filter((l) => l.id !== logId));
+    } catch (e) {
+      console.error("Failed to delete log:", e);
+    }
+  };
+
   const fetchTools = async () => {
     try {
       const res = await fetch(`${API_URL}/tools`);
@@ -1068,19 +1077,19 @@ export default function Dashboard() {
                   ) : (
                     <div className="divide-y">
                       {logs.map((log) => (
-                          <div
-                            key={log.id}
-                            className={`p-4 hover:bg-muted/50 transition-colors flex gap-4 items-start ${
-                              log.decision === "deny"
-                                ? "log-blocked"
-                                : log.decision === "require_approval"
-                                  ? "log-pending"
-                                  : "log-allowed"
-                            }`}
-                          >
-                            <div className="flex-1 space-y-1">
-                              <div className="flex items-center gap-3">
-                                <span className="font-semibold text-foreground tracking-tight">
+                        <div
+                          key={log.id}
+                          className={`p-4 hover:bg-muted/50 transition-colors flex gap-4 items-start ${
+                            log.decision === "deny"
+                              ? "log-blocked"
+                              : log.decision === "require_approval"
+                                ? "log-pending"
+                                : "log-allowed"
+                          }`}
+                        >
+                          <div className="flex-1 space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="font-semibold text-foreground tracking-tight">
                                   {log.tool_name || "System Event"}
                                 </span>
                                 <Badge
@@ -1098,6 +1107,12 @@ export default function Dashboard() {
                                 <span className="text-xs text-muted-foreground ml-auto font-medium font-mono">
                                   {new Date(log.timestamp).toLocaleTimeString()}
                                 </span>
+                                <button
+                                  onClick={() => deleteLog(log.id)}
+                                  className="text-muted-foreground hover:text-destructive transition-colors"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </button>
                               </div>
 
                               {log.reason && (
