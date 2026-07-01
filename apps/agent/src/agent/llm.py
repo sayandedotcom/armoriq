@@ -1,6 +1,7 @@
 import os
 from typing import Any
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 
 SYSTEM_PROMPT = (
@@ -20,17 +21,14 @@ class LLMClient:
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             raise ValueError("GEMINI_API_KEY not set")
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
         self.model_name = model
-        self.model = genai.GenerativeModel(
-            model_name=model,
+        self._generation_config = types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            generation_config={
-                "temperature": 0.2,
-                "top_p": 0.95,
-                "top_k": 40,
-                "max_output_tokens": 8192,
-            },
+            temperature=0.2,
+            top_p=0.95,
+            top_k=40,
+            max_output_tokens=8192,
         )
         self._total_tokens = 0
 
@@ -73,11 +71,22 @@ class LLMClient:
     ) -> dict[str, Any]:
         contents = self._build_contents(messages)
 
-        generate_content_kwargs = {"contents": contents}
+        config = self._generation_config
         if tools:
-            generate_content_kwargs["tools"] = tools
+            config = types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                temperature=0.2,
+                top_p=0.95,
+                top_k=40,
+                max_output_tokens=8192,
+                tools=tools,
+            )
 
-        response = await self.model.generate_content_async(**generate_content_kwargs)
+        response = await self.client.aio.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=config,
+        )
 
         result = {
             "content": "",
@@ -89,13 +98,10 @@ class LLMClient:
             }
         }
 
-        # Iterate parts directly — more reliable than response.text / response.function_calls
-        # across model versions (gemini-2.5-flash includes thought parts that confuse .text).
         if hasattr(response, 'candidates') and response.candidates:
             candidate = response.candidates[0]
             if hasattr(candidate, 'content') and candidate.content and candidate.content.parts:
                 for part in candidate.content.parts:
-                    # Skip thinking/reasoning parts emitted by gemini-2.5-flash
                     if getattr(part, 'thought', False):
                         continue
                     if hasattr(part, 'function_call') and part.function_call and part.function_call.name:
@@ -109,47 +115,48 @@ class LLMClient:
 
         if hasattr(response, 'usage_metadata'):
             result["usage"] = {
-                "prompt_tokens": response.usage_metadata.prompt_token_count,
-                "completion_tokens": response.usage_metadata.candidates_token_count,
-                "total_tokens": response.usage_metadata.total_token_count,
+                "prompt_tokens": response.usage_metadata.prompt_token_count or 0,
+                "completion_tokens": response.usage_metadata.candidates_token_count or 0,
+                "total_tokens": response.usage_metadata.total_token_count or 0,
             }
             self._total_tokens += result["usage"]["total_tokens"]
 
         return result
 
-    def _build_contents(self, messages: list[dict]) -> list[dict]:
+    def _build_contents(self, messages: list[dict]) -> list:
         contents = []
         for msg in messages:
             role = msg.get("role")
             if role == "user":
-                contents.append({
-                    "role": "user",
-                    "parts": [{"text": msg["content"]}]
-                })
+                contents.append(
+                    types.Content(role="user", parts=[types.Part(text=msg["content"])])
+                )
             elif role == "model":
                 parts = []
                 if msg.get("content"):
-                    parts.append({"text": msg["content"]})
+                    parts.append(types.Part(text=msg["content"]))
                 if msg.get("tool_calls"):
                     for tc in msg["tool_calls"]:
-                        parts.append({
-                            "function_call": {
-                                "name": tc["name"],
-                                "args": tc["arguments"],
-                            }
-                        })
+                        parts.append(types.Part(
+                            function_call=types.FunctionCall(
+                                name=tc["name"],
+                                args=tc["arguments"],
+                            )
+                        ))
                 if parts:
-                    contents.append({"role": "model", "parts": parts})
+                    contents.append(types.Content(role="model", parts=parts))
             elif role == "tool":
                 tool_name = msg.get("name", "")
                 content = msg.get("content", "")
-                contents.append({
-                    "role": "user",
-                    "parts": [{
-                        "function_response": {
-                            "name": tool_name,
-                            "response": {"result": content},
-                        }
-                    }]
-                })
+                contents.append(
+                    types.Content(
+                        role="user",
+                        parts=[types.Part(
+                            function_response=types.FunctionResponse(
+                                name=tool_name,
+                                response={"result": content},
+                            )
+                        )]
+                    )
+                )
         return contents
