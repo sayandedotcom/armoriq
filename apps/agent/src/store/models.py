@@ -262,3 +262,12 @@ class LogStore:
                 )
                 for e in db_entries
             ]
+
+    def delete(self, log_id: str) -> bool:
+        with db.session() as s:
+            db_entry = s.query(DBLogEntry).filter(DBLogEntry.id == log_id).first()
+            if not db_entry:
+                return False
+            s.delete(db_entry)
+            s.commit()
+        return True
