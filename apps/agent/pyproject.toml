@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "armoriq-mcp-bank",
     "google-genai>=2.10.0",
+    "psycopg2-binary>=2.9.12",
 ]
 
 # The agent spawns the custom MCP bank as a stdio subprocess (see servers.json),
