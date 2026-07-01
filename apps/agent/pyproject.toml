@@ -6,7 +6,6 @@ requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
-    "google-generativeai>=0.8.5",
     "mcp>=1.1.0",
     "pydantic>=2.10.0",
     "sqlalchemy>=2.0.36",
@@ -16,6 +15,7 @@ dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.0.0",
     "armoriq-mcp-bank",
+    "google-genai>=2.10.0",
 ]
 
 # The agent spawns the custom MCP bank as a stdio subprocess (see servers.json),
